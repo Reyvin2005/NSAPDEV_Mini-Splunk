@@ -1,0 +1,18 @@
+<134>Feb 22 00:05:38 SYSSVR1 systemd[1]: Started OpenBSD Secure Shell server daemon
+<131>Feb 22 01:15:22 WEBSVR1 nginx[1234]: Connect failed on port 80 address already in use
+<132>Feb 22 02:30:11 DBSVR1 mysql[567]: InnoDB buffer pool resized from 256M to 512M
+<134>Feb 22 08:00:01 SYSSVR1 cron[891]: Session opened for user root by cron job
+<135>Feb 22 09:45:55 APPSVR1 rsyslog[23]: Acquired UNIX socket /dev/log for logging
+<130>Feb 22 11:00:00 DBSVR1 kernel[0]: Out of memory: Kill process 4512 (mysqld) score 911
+<133>Feb 22 13:20:44 SYSSVR1 sudo[3456]: User1 ran privileged command as root via sudo
+<134>Feb 23 00:01:00 WEBSVR1 systemd[1]: Reloading nginx web server configuration
+<131>Feb 23 03:45:12 APPSVR1 sshd[7890]: Failed password for invalid user admin from 192.168.1.100 port 22
+<132>Feb 23 06:12:33 SYSSVR1 kernel[0]: eth0 NIC link is down checking cable connection
+<134>Feb 23 10:00:00 DBSVR1 cron[2345]: Backup job completed successfully for database prod_db
+<135>Feb 24 00:00:01 WEBSVR1 rsyslog[98]: Flushing syslog queue of 143 pending messages
+<134>Feb 24 07:30:15 APPSVR1 nginx[3210]: Worker process 3211 exited with code 0
+<131>Feb 24 12:45:00 SYSSVR1 sshd[5678]: Authentication failure for root from 10.0.0.5 port 52341
+<132>Feb 24 16:20:55 DBSVR1 mysql[890]: Table corruption detected in schema prod_db
+<133>Mar 01 00:00:00 WEBSVR1 systemd[1]: System time synchronized with NTP server pool
+<134>Mar 01 08:15:30 APPSVR1 sudo[1234]: User2 granted sudo access by PAM authentication
+<131>Mar 01 14:30:45 SYSSVR1 kernel[0]: CPU thermal throttling activated core temperature 95C
