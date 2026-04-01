@@ -1,7 +1,7 @@
 """
 Mini-Splunk CLI Forwarder Client
 Course: NSAPDEV - DLSU
-Authors: [Your Name] and Joshua Co
+Authors: Reyvin Tan and Joshua Co
 
 Usage: python client.py
 Then type commands at the prompt. Type 'help' for a full list.
