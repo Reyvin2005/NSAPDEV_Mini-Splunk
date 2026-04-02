@@ -1,9 +1,10 @@
 """
 Mini-Splunk Concurrent Syslog Analytics Server
-Course: NSAPDEV - DLSU
-Authors: [Your Name] and Joshua Co
+Course & Section: NSAPDEV | S12B/S31
+Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
 
 Architecture: Thread-per-Connection TCP server.
+
 The main thread accepts connections and spawns a worker thread for each client.
 threading.RLock() protects all writes and reads on the shared log store.
 """

@@ -1,6 +1,9 @@
 """
 test_mini_splunk.py
 -------------------
+Course & Section: NSAPDEV | S12B/S31
+Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
+-------------------
 Self-contained integration and unit test suite for the Mini-Splunk project.
 
 Run with:  python test_mini_splunk.py
