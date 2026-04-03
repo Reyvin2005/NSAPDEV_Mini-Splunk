@@ -62,7 +62,7 @@ def get_snapshot():
 # ============================================================
 
 SYSLOG_REGEX = re.compile(
-    r"^<(\d+)>"                              # PRI field  e.g. <134>
+    r"^(?:<(\d+)>)?"                         # PRI field (optional) e.g. <134>
     r"(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})"  # TIMESTAMP e.g. Feb 22 00:05:38
     r"\s+(\S+)"                              # HOSTNAME  e.g. SYSSVR1
     r"\s+(\S+?)(?:\[\d+\])?:\s+"            # DAEMON[PID]: e.g. systemd[1]:
@@ -80,9 +80,14 @@ def parse_line(line):
     if not match:
         return None
 
-    priority = int(match.group(1))
-    severity_num = priority & 0x07
-    severity = SEVERITY_MAP.get(severity_num, "UNKNOWN")
+    # PRI field is optional; if not present, default to INFO (severity 6)
+    priority_str = match.group(1)
+    if priority_str is None:
+        severity = "INFO"
+    else:
+        priority = int(priority_str)
+        severity_num = priority & 0x07
+        severity = SEVERITY_MAP.get(severity_num, "UNKNOWN")
 
     return {
         "timestamp": match.group(2),
