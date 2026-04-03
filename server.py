@@ -60,45 +60,144 @@ def get_snapshot():
 
 # ============================================================
 # Parsing Module
-# Converts RFC 3164 syslog strings into structured dictionaries.
+# Supports RFC 3164 and RFC 5424 with relaxed whitespace handling
 # ============================================================
 
-SYSLOG_REGEX = re.compile(
-    r"^(?:<(\d+)>)?"                         # PRI field (optional) e.g. <134>
-    r"(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})"  # TIMESTAMP e.g. Feb 22 00:05:38
-    r"\s+(\S+)"                              # HOSTNAME  e.g. SYSSVR1
-    r"\s+(\S+?)(?:\[\d+\])?:\s+"            # DAEMON[PID]: e.g. systemd[1]:
-    r"(.+)$"                                 # MESSAGE
+# RFC 3164 – BSD syslog
+# TIMESTAMP: "Mmm dd hh:mm:ss" where day may be 1-2 digits,
+#            single-digit days may have one or two spaces after month.
+#            Allow optional leading/trailing spaces.
+RFC3164_REGEX = re.compile(
+    r"^\s*"                                      # optional leading spaces
+    r"(?:<(?P<pri>\d{1,3})>\s*)?"                # optional PRI, allow space after >
+    r"(?P<timestamp>"
+        r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"\s+"                                   # at least one space after month
+        r"\d{1,2}"                               # day (1 or 2 digits)
+        r"\s+"                                   # at least one space after day
+        r"\d{1,2}:\d{2}:\d{2}"                   # time (hour can be 1-2 digits)
+    r")\s+"
+    r"(?P<hostname>\S+)\s+"
+    r"(?P<tag>[a-zA-Z0-9_.-]+)"                  # TAG – allow alnum, dot, hyphen, underscore 
+    r"(?:\[(?P<pid>\d+)\])?"                     # optional [PID]
+    r":\s*"
+    r"(?P<msg>.*)$"
 )
 
+# RFC 5424 – modern syslog
+# VERSION must be 1-3 digits.
+# TIMESTAMP: NILVALUE '-' or ISO 8601 with optional fractional seconds and timezone.
+# STRUCTURED-DATA: NILVALUE '-' or one or more '[name value pairs]'.
+RFC5424_REGEX = re.compile(
+    r"^\s*"                                      # optional leading spaces
+    r"(?:<(?P<pri>\d{1,3})>)"                   # PRI (mandatory)
+    r"\s+(?P<version>[1-9]\d{0,2})\s+"          # VERSION
+    r"(?P<timestamp>"
+        r"-|"                                    # NILVALUE
+        r"\d{4}-\d{2}-\d{2}T"
+        r"\d{2}:\d{2}:\d{2}"
+        r"(?:\.\d{1,6})?"                       # optional fractional seconds
+        r"(?:Z|[+-]\d{2}:\d{2})"                # timezone
+    r")\s+"
+    r"(?P<hostname>\S+)\s+"
+    r"(?P<appname>\S+)\s+"
+    r"(?P<procid>\S+)\s+"
+    r"(?P<msgid>\S+)\s+"
+    r"(?P<structured_data>"
+        r"-|"                                    # NILVALUE
+        r"(?:\[[^\]]*\])+"                       # one or more structured data elements
+    r")"
+    r"(?:\s+(?P<msg>.*))?$"                     # optional SP + MSG (free-form)
+)
+
+RFC5424_REGEX = re.compile(
+    r"^\s*"
+    r"(?:<(?P<pri>\d{1,3})>)"
+    r"\s+(?P<version>[1-9]\d{0,2})\s+"
+    r"(?P<timestamp>"
+        r"-|"
+        r"\d{4}-\d{2}-\d{2}T"
+        r"\d{2}:\d{2}:\d{2}"
+        r"(?:\.\d{1,6})?"
+        r"(?:Z|[+-]\d{2}:\d{2})"
+    r")\s+"
+    r"(?P<hostname>\S+)\s+"
+    r"(?P<appname>\S+)\s+"
+    r"(?P<procid>\S+)\s+"
+    r"(?P<msgid>\S+)\s+"
+    r"(?P<structured_data>"
+        r"-|"
+        r"(?:\[[^\]]*\])+"          # one or more SD elements
+    r")"
+    r"(?:\s+(?P<msg>.*))?$"
+)
+
+def parse_pri(priority_str):
+    """Convert PRI (0..191) into severity using the low 3 bits."""
+    if priority_str is None:
+        return "INFO"
+    try:
+        priority = int(priority_str)
+    except ValueError:
+        return "INFO"
+    severity_num = priority & 0x07
+    return SEVERITY_MAP.get(severity_num, "UNKNOWN")
 
 def parse_line(line):
     """
-    Parse a single RFC 3164 syslog line into a structured dictionary.
-    Returns None if the line does not match the expected format.
+    Parse one syslog line as RFC 5424 first, then RFC 3164.
+    Returns a dict with fields: timestamp, hostname, daemon, severity, message,
+    format, structured_data (or None), raw.
+    Returns None for non‑matching lines.
     """
-    line = line.strip()
-    match = SYSLOG_REGEX.match(line)
-    if not match:
+    line = line.rstrip("\n\r")                  # remove newline and carriage return
+    if not line.strip():
         return None
 
-    # PRI field is optional - if not present, default to INFO (severity 6)
-    priority_str = match.group(1)
-    if priority_str is None:
-        severity = "INFO"
-    else:
-        priority = int(priority_str)
-        severity_num = priority & 0x07
-        severity = SEVERITY_MAP.get(severity_num, "UNKNOWN")
+    # Try RFC 5424
+    m = RFC5424_REGEX.match(line)
+    if m:
+        appname = m.group("appname")
+        procid = m.group("procid")
+        # Build daemon field as "appname" or "appname[procid]"
+        daemon = appname if procid == "-" else f"{appname}[{procid}]"
 
-    return {
-        "timestamp": match.group(2),
-        "hostname":  match.group(3),
-        "daemon":    match.group(4),
-        "severity":  severity,
-        "message":   match.group(5),
-    }
+        return {
+            "timestamp": m.group("timestamp"),
+            "hostname": m.group("hostname"),
+            "daemon": daemon,
+            "severity": parse_pri(m.group("pri")),
+            "message": m.group("msg") or "",
+            "format": "RFC5424",
+            "structured_data": m.group("structured_data"),
+            "raw": line,
+        }
 
+    # Try RFC 3164
+    m = RFC3164_REGEX.match(line)
+    if m:
+        tag = m.group("tag")
+        pid = m.group("pid")
+        if pid:
+            daemon = f"{tag}[{pid}]"
+        else:
+            daemon = tag
+
+        return {
+            "timestamp": m.group("timestamp"),
+            "hostname": m.group("hostname"),
+            "daemon": daemon,
+            "severity": parse_pri(m.group("pri")),
+            "message": m.group("msg") or "",
+            "format": "RFC3164",
+            "structured_data": None,
+            "raw": line,
+        }
+
+    # If we reach here, the line didn't match either format.
+    # Optionally log the failure for debugging (print or use logging)
+    # print(f"DEBUG: Failed to parse: {line[:80]}")
+    return None
 
 def parse_stream(content):
     """Parse a multi-line syslog string and return a list of log dictionaries."""
