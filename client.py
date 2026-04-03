@@ -88,7 +88,7 @@ def send_simple_command(command, host, port):
         return f"ERROR: {exc}"
 
 
-def display_paginated_results(query_type, param, initial_response):
+def display_paginated_results(host, port, query_type, param, initial_response):
     """
     Display paginated search results with metadata and allow navigation.
     Handles user input for 'next', 'prev', and 'exit' to navigate pages.
@@ -147,7 +147,11 @@ def display_paginated_results(query_type, param, initial_response):
             break
         elif choice == "N" and has_next:
             next_page = page + 1
-            response = send_simple_command(f"QUERY|{query_type}|{param}|{next_page}")
+            response = send_simple_command(
+                f"QUERY|{query_type}|{param}|{next_page}",
+                host,
+                port,
+            )
             try:
                 response_data = json.loads(response)
                 metadata = response_data.get("metadata", {})
@@ -161,7 +165,11 @@ def display_paginated_results(query_type, param, initial_response):
                 break
         elif choice == "P" and has_prev:
             prev_page = page - 1
-            response = send_simple_command(f"QUERY|{query_type}|{param}|{prev_page}")
+            response = send_simple_command(
+                f"QUERY|{query_type}|{param}|{prev_page}",
+                host,
+                port,
+            )
             try:
                 response_data = json.loads(response)
                 metadata = response_data.get("metadata", {})
@@ -213,40 +221,51 @@ def cmd_ingest(filepath, host, port):
         print(f"[ERROR] {exc}")
 
 
-def cmd_search_date(date):
+def cmd_search_date(host, port, date):
     """SEARCH_DATE: filter logs whose timestamp contains <date>."""
-    response = send_simple_command(f"QUERY|SEARCH_DATE|{date}")
-    print(f"[SEARCH_DATE]     Results for '{date}':\n{response}")
+    response = send_simple_command(f"QUERY|SEARCH_DATE|{date}", host, port)
+    display_paginated_results(host, port, "SEARCH_DATE", date, response)
 
 
-def cmd_search_host(hostname):
+def cmd_search_host(host, port, hostname):
     """SEARCH_HOST: filter logs by exact hostname match."""
-    response = send_simple_command(f"QUERY|SEARCH_HOST|{hostname}")
-    print(f"[SEARCH_HOST]     Results for '{hostname}':\n{response}")
+    response = send_simple_command(f"QUERY|SEARCH_HOST|{hostname}", host, port)
+    display_paginated_results(host, port, "SEARCH_HOST", hostname, response)
 
 
-def cmd_search_daemon(daemon):
+def cmd_search_daemon(host, port, daemon):
     """SEARCH_DAEMON: filter logs by daemon name."""
-    response = send_simple_command(f"QUERY|SEARCH_DAEMON|{daemon}")
-    print(f"[SEARCH_DAEMON]   Results for '{daemon}':\n{response}")
+    response = send_simple_command(f"QUERY|SEARCH_DAEMON|{daemon}", host, port)
+    display_paginated_results(host, port, "SEARCH_DAEMON", daemon, response)
 
 
-def cmd_search_severity(level):
+def cmd_search_severity(host, port, level):
     """SEARCH_SEVERITY: filter logs by severity level (INFO, ERR, WARNING, ...)."""
-    response = send_simple_command(f"QUERY|SEARCH_SEVERITY|{level}")
-    print(f"[SEARCH_SEVERITY] Results for '{level}':\n{response}")
+    response = send_simple_command(f"QUERY|SEARCH_SEVERITY|{level}", host, port)
+    display_paginated_results(host, port, "SEARCH_SEVERITY", level, response)
 
 
-def cmd_search_keyword(word):
+def cmd_search_keyword(host, port, word):
     """SEARCH_KEYWORD: filter logs whose message contains <word>."""
-    response = send_simple_command(f"QUERY|SEARCH_KEYWORD|{word}")
-    print(f"[SEARCH_KEYWORD]  Results for '{word}':\n{response}")
+    response = send_simple_command(f"QUERY|SEARCH_KEYWORD|{word}", host, port)
+    display_paginated_results(host, port, "SEARCH_KEYWORD", word, response)
 
 
-def cmd_count_keyword(word):
+def cmd_count_keyword(host, port, word):
     """COUNT_KEYWORD: count how many log entries contain <word> in the message."""
-    response = send_simple_command(f"QUERY|COUNT_KEYWORD|{word}")
+    response = send_simple_command(f"QUERY|COUNT_KEYWORD|{word}", host, port)
     print(f"[COUNT_KEYWORD]   Entries containing '{word}': {response}")
+
+
+def cmd_query(host, port, query_type, query_arg):
+    """Dispatch a QUERY command to server and render results by query type."""
+    response = send_simple_command(f"QUERY|{query_type}|{query_arg}", host, port)
+
+    if query_type == "COUNT_KEYWORD":
+        print(f"[COUNT_KEYWORD]   Entries containing '{query_arg}': {response}")
+        return
+
+    display_paginated_results(host, port, query_type, query_arg, response)
 
 
 def cmd_purge(host, port):

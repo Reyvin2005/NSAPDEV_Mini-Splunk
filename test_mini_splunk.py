@@ -18,6 +18,7 @@ import threading
 import time
 import sys
 import os
+import json
 
 TEST_PORT = 19514
 TEST_HOST = "127.0.0.1"
@@ -111,6 +112,11 @@ def tcp_send_recv(command_line, extra_bytes=b""):
                 break
             body += chunk
         return body.decode("utf-8")
+
+
+def parse_query_json(response):
+    """Decode paginated QUERY response and return parsed JSON dict."""
+    return json.loads(response)
 
 
 # ============================================================
@@ -216,33 +222,42 @@ def test_query_engine():
 
     # SEARCH_DATE
     result = srv.search_by_date("Feb 22")
-    lines = [l for l in result.splitlines() if l]
-    record("search_by_date('Feb 22') returns 7 entries", len(lines) == 7, f"got {len(lines)}")
+    data = parse_query_json(result)
+    total = data.get("metadata", {}).get("total_results")
+    record("search_by_date('Feb 22') returns 7 entries", total == 7, f"got {total}")
 
     # SEARCH_HOST
     result = srv.search_by_host("WEBSVR1")
-    lines = [l for l in result.splitlines() if l]
-    record("search_by_host('WEBSVR1') returns 4 entries", len(lines) == 4, f"got {len(lines)}")
+    data = parse_query_json(result)
+    total = data.get("metadata", {}).get("total_results")
+    record("search_by_host('WEBSVR1') returns 4 entries", total == 4, f"got {total}")
 
     # SEARCH_DAEMON
     result = srv.search_by_daemon("cron")
-    lines = [l for l in result.splitlines() if l]
-    record("search_by_daemon('cron') returns 2 entries", len(lines) == 2, f"got {len(lines)}")
+    data = parse_query_json(result)
+    total = data.get("metadata", {}).get("total_results")
+    record("search_by_daemon('cron') returns 2 entries", total == 2, f"got {total}")
 
     # SEARCH_SEVERITY
     result = srv.search_by_severity("ERR")
-    lines = [l for l in result.splitlines() if l]
-    record("search_by_severity('ERR') returns 4 entries", len(lines) == 4, f"got {len(lines)}")
+    data = parse_query_json(result)
+    total = data.get("metadata", {}).get("total_results")
+    record("search_by_severity('ERR') returns 4 entries", total == 4, f"got {total}")
 
     result_lower = srv.search_by_severity("err")
     record("search_by_severity is case-insensitive", result == result_lower)
 
     # SEARCH_KEYWORD
     result = srv.search_by_keyword("root")
-    record("search_by_keyword('root') finds matches", result != "NO_RESULTS")
+    data = parse_query_json(result)
+    record("search_by_keyword('root') finds matches", data.get("metadata", {}).get("total_results", 0) > 0)
 
     result_none = srv.search_by_keyword("xyzzy_no_match_99")
-    record("search_by_keyword with no match returns NO_RESULTS", result_none == "NO_RESULTS")
+    data_none = parse_query_json(result_none)
+    record(
+        "search_by_keyword with no match returns NO_RESULTS",
+        data_none.get("logs") == "NO_RESULTS" and data_none.get("metadata", {}).get("total_results") == 0,
+    )
 
     # COUNT_KEYWORD
     count_str = srv.count_keyword("failed")
@@ -276,29 +291,39 @@ def test_protocol():
 
     # --- SEARCH_DATE ---
     response = tcp_send_recv("QUERY|SEARCH_DATE|Feb 22\n")
-    lines = [l for l in response.splitlines() if l]
-    record("SEARCH_DATE|Feb 22: returns 7 lines", len(lines) == 7, f"got {len(lines)}")
+    data = parse_query_json(response)
+    total = data.get("metadata", {}).get("total_results")
+    record("SEARCH_DATE|Feb 22: returns 7 lines", total == 7, f"got {total}")
 
     # --- SEARCH_HOST ---
     response = tcp_send_recv("QUERY|SEARCH_HOST|DBSVR1\n")
-    lines = [l for l in response.splitlines() if l]
-    record("SEARCH_HOST|DBSVR1: returns 4 lines", len(lines) == 4, f"got {len(lines)}")
+    data = parse_query_json(response)
+    total = data.get("metadata", {}).get("total_results")
+    record("SEARCH_HOST|DBSVR1: returns 4 lines", total == 4, f"got {total}")
 
     # --- SEARCH_DAEMON ---
     response = tcp_send_recv("QUERY|SEARCH_DAEMON|nginx\n")
-    lines = [l for l in response.splitlines() if l]
-    record("SEARCH_DAEMON|nginx: returns 2 lines", len(lines) == 2, f"got {len(lines)}")
+    data = parse_query_json(response)
+    total = data.get("metadata", {}).get("total_results")
+    record("SEARCH_DAEMON|nginx: returns 2 lines", total == 2, f"got {total}")
 
     # --- SEARCH_SEVERITY ---
     response = tcp_send_recv("QUERY|SEARCH_SEVERITY|INFO\n")
-    lines = [l for l in response.splitlines() if l]
-    record("SEARCH_SEVERITY|INFO: returns 6 lines", len(lines) == 6, f"got {len(lines)}")
+    data = parse_query_json(response)
+    total = data.get("metadata", {}).get("total_results")
+    record("SEARCH_SEVERITY|INFO: returns 6 lines", total == 6, f"got {total}")
 
     # --- SEARCH_KEYWORD ---
     response = tcp_send_recv("QUERY|SEARCH_KEYWORD|Failed\n")
-    record("SEARCH_KEYWORD|Failed: not NO_RESULTS", response != "NO_RESULTS")
-    record("SEARCH_KEYWORD is case-insensitive",
-           tcp_send_recv("QUERY|SEARCH_KEYWORD|failed\n") == response)
+    data = parse_query_json(response)
+    record("SEARCH_KEYWORD|Failed: not NO_RESULTS", data.get("metadata", {}).get("total_results", 0) > 0)
+
+    response_lower = tcp_send_recv("QUERY|SEARCH_KEYWORD|failed\n")
+    data_lower = parse_query_json(response_lower)
+    record(
+        "SEARCH_KEYWORD is case-insensitive",
+        data_lower.get("metadata", {}).get("total_results") == data.get("metadata", {}).get("total_results"),
+    )
 
     # --- COUNT_KEYWORD ---
     count_resp = tcp_send_recv("QUERY|COUNT_KEYWORD|process\n")
@@ -314,7 +339,11 @@ def test_protocol():
 
     # Post-purge search returns NO_RESULTS
     response = tcp_send_recv("QUERY|SEARCH_SEVERITY|INFO\n")
-    record("Post-PURGE search returns NO_RESULTS", response == "NO_RESULTS")
+    data = parse_query_json(response)
+    record(
+        "Post-PURGE search returns NO_RESULTS",
+        data.get("logs") == "NO_RESULTS" and data.get("metadata", {}).get("total_results") == 0,
+    )
 
     # --- Unknown command error handling ---
     response = tcp_send_recv("BOGUS|COMMAND\n")
