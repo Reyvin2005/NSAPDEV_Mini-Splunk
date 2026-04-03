@@ -12,10 +12,12 @@ threading.RLock() protects all writes and reads on the shared log store.
 import socket
 import threading
 import re
+import json
 
 
 HOST = "0.0.0.0"
 PORT = 9514
+RESULTS_PER_PAGE = 100
 
 SEVERITY_MAP = {
     0: "EMERG",
@@ -80,7 +82,7 @@ def parse_line(line):
     if not match:
         return None
 
-    # PRI field is optional; if not present, default to INFO (severity 6)
+    # PRI field is optional - if not present, default to INFO (severity 6)
     priority_str = match.group(1)
     if priority_str is None:
         severity = "INFO"
@@ -125,33 +127,93 @@ def format_entries(entries):
     return "\n".join(lines)
 
 
-def search_by_date(date):
-    results = [e for e in get_snapshot() if date in e["timestamp"]]
-    return format_entries(results)
+def format_paginated_response(all_results, page=1, per_page=RESULTS_PER_PAGE):
+    """
+    Format query results with pagination metadata.
+    Returns a JSON response containing metadata and paginated results.
+    """
+    total = len(all_results)
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 0
+    
+    # Ensure page is valid
+    page = max(1, min(page, total_pages))
+    
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_results = all_results[start_idx:end_idx]
+    
+    has_next = page < total_pages
+    has_prev = page > 1
+    
+    metadata = {
+        "total_results": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "has_next": has_next,
+        "has_prev": has_prev,
+        "results_on_page": len(page_results),
+    }
+    
+    formatted_logs = format_entries(page_results)
+    
+    return json.dumps({
+        "metadata": metadata,
+        "logs": formatted_logs,
+    })
 
 
-def search_by_host(hostname):
-    results = [e for e in get_snapshot() if e["hostname"].lower() == hostname.lower()]
-    return format_entries(results)
+def search_by_date(date, page=1):
+    needle = date.strip().lower()
+    results = [
+        e for e in get_snapshot()
+        if needle in e["timestamp"].lower()
+    ]
+    return format_paginated_response(results, page)
 
 
-def search_by_daemon(daemon):
-    results = [e for e in get_snapshot() if e["daemon"].lower() == daemon.lower()]
-    return format_entries(results)
+def search_by_host(hostname, page=1):
+    needle = hostname.strip().lower()
+    results = [
+        e for e in get_snapshot()
+        if e["hostname"].strip().lower() == needle
+    ]
+    return format_paginated_response(results, page)
 
 
-def search_by_severity(level):
-    results = [e for e in get_snapshot() if e["severity"].upper() == level.upper()]
-    return format_entries(results)
+def search_by_daemon(daemon, page=1):
+    needle = daemon.strip().lower()
+    results = [
+        e for e in get_snapshot()
+        if e["daemon"].strip().lower() == needle
+    ]
+    return format_paginated_response(results, page)
 
 
-def search_by_keyword(word):
-    results = [e for e in get_snapshot() if word.lower() in e["message"].lower()]
-    return format_entries(results)
+def search_by_severity(level, page=1):
+    needle = level.strip().upper()
+    results = [
+        e for e in get_snapshot()
+        if e["severity"].strip().upper() == needle
+    ]
+    return format_paginated_response(results, page)
+
+
+def search_by_keyword(word, page=1):
+    needle = word.strip().lower()
+    results = [
+        e for e in get_snapshot()
+        if needle in e["message"].lower()
+    ]
+    return format_paginated_response(results, page)
 
 
 def count_keyword(word):
-    total = sum(1 for e in get_snapshot() if word.lower() in e["message"].lower())
+    needle = word.strip().lower()
+    total = sum(
+        1 for e in get_snapshot()
+        if needle in e["message"].lower()
+    )
     return str(total)
 
 
@@ -212,7 +274,7 @@ def send_response(conn, response):
 
 def process_command(message):
     """Route an incoming command string to the appropriate module function."""
-    parts = message.split("|", 2)
+    parts = message.split("|", 3)  # Allow up to 4 parts (command|type|param|page)
     if not parts or not parts[0]:
         return "ERROR: Empty command"
 
@@ -234,13 +296,23 @@ def process_command(message):
             return "ERROR: Malformed QUERY command"
         query_type = parts[1].upper()
         param = parts[2]
+        
+        # Extract page number if provided
+        page = 1
+        if len(parts) > 3:
+            try:
+                page = int(parts[3])
+                if page < 1:
+                    page = 1
+            except ValueError:
+                page = 1
 
         query_dispatch = {
-            "SEARCH_DATE":     lambda: search_by_date(param),
-            "SEARCH_HOST":     lambda: search_by_host(param),
-            "SEARCH_DAEMON":   lambda: search_by_daemon(param),
-            "SEARCH_SEVERITY": lambda: search_by_severity(param),
-            "SEARCH_KEYWORD":  lambda: search_by_keyword(param),
+            "SEARCH_DATE":     lambda: search_by_date(param, page),
+            "SEARCH_HOST":     lambda: search_by_host(param, page),
+            "SEARCH_DAEMON":   lambda: search_by_daemon(param, page),
+            "SEARCH_SEVERITY": lambda: search_by_severity(param, page),
+            "SEARCH_KEYWORD":  lambda: search_by_keyword(param, page),
             "COUNT_KEYWORD":   lambda: count_keyword(param),
         }
 
