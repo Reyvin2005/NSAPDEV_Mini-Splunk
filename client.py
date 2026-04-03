@@ -259,6 +259,7 @@ def cmd_count_keyword(host, port, word):
 
 def cmd_query(host, port, query_type, query_arg):
     """Dispatch a QUERY command to server and render results by query type."""
+    print(f"[System Message] Sending query to {host}:{port}...")
     response = send_simple_command(f"QUERY|{query_type}|{query_arg}", host, port)
 
     if query_type == "COUNT_KEYWORD":
