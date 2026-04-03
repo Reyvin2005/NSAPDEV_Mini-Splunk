@@ -60,26 +60,25 @@ def get_snapshot():
 
 # ============================================================
 # Parsing Module
-# Supports RFC 3164 and RFC 5424 with relaxed whitespace handling
+# Supports RFC 3164 and RFC 5424 with compliant parsing rules.
 # ============================================================
 
 # RFC 3164 – BSD syslog
 # TIMESTAMP: "Mmm dd hh:mm:ss" where day may be 1-2 digits,
-#            single-digit days may have one or two spaces after month.
-#            Allow optional leading/trailing spaces.
+#            and single-digit days may have one or two spaces after month.
 RFC3164_REGEX = re.compile(
-    r"^\s*"                                      # optional leading spaces
-    r"(?:<(?P<pri>\d{1,3})>\s*)?"                # optional PRI, allow space after >
+    r"^\s*"
+    r"(?:<(?P<pri>\d{1,3})>\s*)?"
     r"(?P<timestamp>"
         r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
-        r"\s+"                                   # at least one space after month
-        r"\d{1,2}"                               # day (1 or 2 digits)
-        r"\s+"                                   # at least one space after day
-        r"\d{1,2}:\d{2}:\d{2}"                   # time (hour can be 1-2 digits)
+        r"\s{1,2}"
+        r"\d{1,2}"
+        r"\s+"
+        r"\d{2}:\d{2}:\d{2}"
     r")\s+"
     r"(?P<hostname>\S+)\s+"
-    r"(?P<tag>[a-zA-Z0-9_./-]+)"                 # TAG - allow alnum, dot, slash, hyphen, underscore
-    r"(?:\[(?P<pid>\d+)\])?"                     # optional [PID]
+    r"(?P<tag>[^\s:\[]+)"
+    r"(?:\[(?P<pid>\d+)\])?"
     r":\s*"
     r"(?P<msg>.*)$"
 )
@@ -87,28 +86,29 @@ RFC3164_REGEX = re.compile(
 # RFC 5424 – modern syslog
 # VERSION must be 1-3 digits.
 # TIMESTAMP: NILVALUE '-' or ISO 8601 with optional fractional seconds and timezone.
-# STRUCTURED-DATA: NILVALUE '-' or one or more '[name value pairs]'.
+# STRUCTURED-DATA: NILVALUE '-' or one or more structured data elements.
 RFC5424_REGEX = re.compile(
-    r"^\s*"                                      # optional leading spaces
-    r"(?:<(?P<pri>\d{1,3})>)"                   # PRI (mandatory)
-    r"(?P<version>[1-9]\d{0,2})\s+"             # VERSION
+    r"^\s*"
+    r"<(?P<pri>\d{1,3})>"
+    r"(?P<version>[1-9]\d{0,2})\s+"
     r"(?P<timestamp>"
-        r"-|"                                    # NILVALUE
+        r"-|"
         r"\d{4}-\d{2}-\d{2}T"
         r"\d{2}:\d{2}:\d{2}"
-        r"(?:\.\d{1,6})?"                       # optional fractional seconds
-        r"(?:Z|[+-]\d{2}:\d{2})"                # timezone
+        r"(?:\.\d{1,6})?"
+        r"(?:Z|[+-]\d{2}:\d{2})"
     r")\s+"
     r"(?P<hostname>\S+)\s+"
     r"(?P<appname>\S+)\s+"
     r"(?P<procid>\S+)\s+"
     r"(?P<msgid>\S+)\s+"
     r"(?P<structured_data>"
-        r"-|"                                    # NILVALUE
-        r"(?:\[(?:\\.|[^\\\]])*\])+"            # one or more structured data elements
+        r"-|"
+        r"(?:\[(?:\\.|[^\]])*\])+"
     r")"
-    r"(?:\s+(?P<msg>.*))?$"                     # optional SP + MSG (free-form)
+    r"(?:\s+(?P<msg>.*))?$"
 )
+
 
 def parse_pri(priority_str):
     """Convert PRI (0..191) into severity using the low 3 bits."""
@@ -121,28 +121,25 @@ def parse_pri(priority_str):
     severity_num = priority & 0x07
     return SEVERITY_MAP.get(severity_num, "UNKNOWN")
 
+
 def parse_line(line):
     """
     Parse one syslog line as RFC 5424 first, then RFC 3164.
     Returns a dict with fields: timestamp, hostname, daemon, severity, message,
     format, structured_data (or None), raw.
-    Returns None for non‑matching lines.
+    Returns None for non-matching lines.
     """
-    line = line.rstrip("\n\r")                  # remove newline and carriage return
+    line = line.rstrip("\n\r")
     if not line.strip():
         return None
 
     # Try RFC 5424
     m = RFC5424_REGEX.match(line)
     if m:
-        appname = m.group("appname")
-        # Keep daemon normalized for stable SEARCH_DAEMON matching.
-        daemon = appname
-
         return {
             "timestamp": m.group("timestamp"),
             "hostname": m.group("hostname"),
-            "daemon": daemon,
+            "daemon": m.group("appname"),
             "severity": parse_pri(m.group("pri")),
             "message": m.group("msg") or "",
             "format": "RFC5424",
@@ -154,12 +151,11 @@ def parse_line(line):
     m = RFC3164_REGEX.match(line)
     if m:
         tag = m.group("tag")
-        daemon = tag
 
         return {
             "timestamp": m.group("timestamp"),
             "hostname": m.group("hostname"),
-            "daemon": daemon,
+            "daemon": tag,
             "severity": parse_pri(m.group("pri")),
             "message": m.group("msg") or "",
             "format": "RFC3164",
@@ -167,10 +163,9 @@ def parse_line(line):
             "raw": line,
         }
 
-    # If we reach here, the line didn't match either format.
-    # Optionally log the failure for debugging (print or use logging)
-    # print(f"DEBUG: Failed to parse: {line[:80]}")
+    # If we reach here, the line did not match either format.
     return None
+
 
 def parse_stream(content):
     """Parse a multi-line syslog string and return a list of log dictionaries."""
@@ -211,17 +206,20 @@ def format_paginated_response(all_results, page=1, per_page=RESULTS_PER_PAGE):
     """
     total = len(all_results)
     total_pages = (total + per_page - 1) // per_page if total > 0 else 0
-    
-    # Ensure page is valid
-    page = max(1, min(page, total_pages))
-    
+
+    # Ensure page is valid.
+    if total_pages == 0:
+        page = 1
+    else:
+        page = max(1, min(page, total_pages))
+
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     page_results = all_results[start_idx:end_idx]
-    
+
     has_next = page < total_pages
     has_prev = page > 1
-    
+
     metadata = {
         "total_results": total,
         "page": page,
@@ -231,9 +229,9 @@ def format_paginated_response(all_results, page=1, per_page=RESULTS_PER_PAGE):
         "has_prev": has_prev,
         "results_on_page": len(page_results),
     }
-    
+
     formatted_logs = format_entries(page_results)
-    
+
     return json.dumps({
         "metadata": metadata,
         "logs": formatted_logs,
@@ -259,10 +257,16 @@ def search_by_host(hostname, page=1):
 
 
 def search_by_daemon(daemon, page=1):
+    """
+    Search logs by daemon name.
+
+    This uses partial matching so searches like "nginx" will match daemon names
+    that contain the same value in a real-world syslog stream.
+    """
     needle = daemon.strip().lower()
     results = [
         e for e in get_snapshot()
-        if e["daemon"].strip().lower() == needle
+        if needle in e["daemon"].strip().lower()
     ]
     return format_paginated_response(results, page)
 
@@ -349,63 +353,91 @@ def send_response(conn, response):
     conn.sendall(encoded)
 
 
+def process_upload(parts):
+    """Process an upload command with pipe-safe parsing."""
+    if len(parts) < 3:
+        return "ERROR: Malformed UPLOAD command"
+
+    try:
+        _filesize = int(parts[1])
+    except ValueError:
+        return "ERROR: Malformed UPLOAD command"
+
+    content = parts[2]
+
+    # The content may contain the '|' character, so keep everything after the
+    # second pipe intact and pass it directly to the parser.
+    try:
+        entries = parse_stream(content)
+        append_logs(entries)
+        return f"SUCCESS: Ingested {len(entries)} log entries into the store"
+    except Exception as exc:
+        return f"ERROR: {exc}"
+
+
+def process_query(parts):
+    """Process a query command with stable and readable parsing."""
+    if len(parts) < 3:
+        return "ERROR: Malformed QUERY command"
+
+    query_type = parts[1].upper()
+    param = parts[2]
+
+    # Extract page number if provided.
+    page = 1
+    if len(parts) > 3:
+        try:
+            page = int(parts[3])
+            if page < 1:
+                page = 1
+        except ValueError:
+            page = 1
+
+    query_dispatch = {
+        "SEARCH_DATE":     lambda: search_by_date(param, page),
+        "SEARCH_HOST":     lambda: search_by_host(param, page),
+        "SEARCH_DAEMON":   lambda: search_by_daemon(param, page),
+        "SEARCH_SEVERITY":  lambda: search_by_severity(param, page),
+        "SEARCH_KEYWORD":   lambda: search_by_keyword(param, page),
+        "COUNT_KEYWORD":    lambda: count_keyword(param),
+    }
+
+    handler = query_dispatch.get(query_type)
+    if handler:
+        return handler()
+    return f"ERROR: Unknown query type '{query_type}'"
+
+
+def process_admin(parts):
+    """Process an admin command."""
+    if len(parts) < 2:
+        return "ERROR: Malformed ADMIN command"
+
+    admin_cmd = parts[1].upper()
+    if admin_cmd == "PURGE":
+        purge_logs()
+        return "SUCCESS: Log store purged. All entries have been removed."
+    return f"ERROR: Unknown admin command '{admin_cmd}'"
+
+
 def process_command(message):
     """Route an incoming command string to the appropriate module function."""
-    parts = message.split("|", 3)  # Allow up to 4 parts (command|type|param|page)
-    if not parts or not parts[0]:
+    if not message:
         return "ERROR: Empty command"
 
-    command_type = parts[0].upper()
+    command_type = message.split("|", 1)[0].upper()
 
     if command_type == "UPLOAD":
-        if len(parts) < 3:
-            return "ERROR: Malformed UPLOAD command"
-        try:
-            content = parts[2]
-            entries = parse_stream(content)
-            append_logs(entries)
-            return f"SUCCESS: Ingested {len(entries)} log entries into the store"
-        except Exception as exc:
-            return f"ERROR: {exc}"
+        parts = message.split("|", 2)
+        return process_upload(parts)
 
     if command_type == "QUERY":
-        if len(parts) < 3:
-            return "ERROR: Malformed QUERY command"
-        query_type = parts[1].upper()
-        param = parts[2]
-        
-        # Extract page number if provided
-        page = 1
-        if len(parts) > 3:
-            try:
-                page = int(parts[3])
-                if page < 1:
-                    page = 1
-            except ValueError:
-                page = 1
-
-        query_dispatch = {
-            "SEARCH_DATE":     lambda: search_by_date(param, page),
-            "SEARCH_HOST":     lambda: search_by_host(param, page),
-            "SEARCH_DAEMON":   lambda: search_by_daemon(param, page),
-            "SEARCH_SEVERITY": lambda: search_by_severity(param, page),
-            "SEARCH_KEYWORD":  lambda: search_by_keyword(param, page),
-            "COUNT_KEYWORD":   lambda: count_keyword(param),
-        }
-
-        handler = query_dispatch.get(query_type)
-        if handler:
-            return handler()
-        return f"ERROR: Unknown query type '{query_type}'"
+        parts = message.split("|", 3)
+        return process_query(parts)
 
     if command_type == "ADMIN":
-        if len(parts) < 2:
-            return "ERROR: Malformed ADMIN command"
-        admin_cmd = parts[1].upper()
-        if admin_cmd == "PURGE":
-            purge_logs()
-            return "SUCCESS: Log store purged. All entries have been removed."
-        return f"ERROR: Unknown admin command '{admin_cmd}'"
+        parts = message.split("|", 1)
+        return process_admin(parts)
 
     return f"ERROR: Unknown command type '{command_type}'"
 
