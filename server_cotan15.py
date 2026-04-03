@@ -4,6 +4,7 @@ Course & Section: NSAPDEV | S12B/S31
 Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
 
 Architecture: Thread-per-Connection TCP server.
+Usage: python server_cotan15.py
 
 The main thread accepts connections and spawns a worker thread for each client.
 threading.RLock() protects all writes and reads on the shared log store.
