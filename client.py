@@ -10,6 +10,7 @@ Then type commands at the prompt. Type 'help' for a full list.
 
 import socket
 import os
+import shlex
 
 
 SERVER_HOST = "127.0.0.1"
@@ -47,20 +48,40 @@ def recv_response(sock):
     return resp_buf.decode("utf-8")
 
 
-def send_simple_command(command):
+def parse_endpoint(endpoint):
+    """Parse <IP_or_DNS>:<Port> and return (host, port)."""
+    if ":" not in endpoint:
+        raise ValueError("Endpoint must be in the form <IP_or_DNS>:<Port>")
+
+    host, port_str = endpoint.rsplit(":", 1)
+    if not host:
+        raise ValueError("Endpoint host cannot be empty")
+
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise ValueError("Endpoint port must be an integer") from exc
+
+    if port < 1 or port > 65535:
+        raise ValueError("Endpoint port must be between 1 and 65535")
+
+    return host, port
+
+
+def send_simple_command(command, host, port):
     """
     Open a new connection, send a single-line command ending with newline,
     and return the server response string.
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((SERVER_HOST, SERVER_PORT))
+            sock.connect((host, port))
             sock.sendall((command + "\n").encode("utf-8"))
             return recv_response(sock)
     except ConnectionRefusedError:
         return (
             f"ERROR: Connection refused. "
-            f"Is the server running on {SERVER_HOST}:{SERVER_PORT}?"
+            f"Is the server running on {host}:{port}?"
         )
     except Exception as exc:
         return f"ERROR: {exc}"
@@ -70,7 +91,7 @@ def send_simple_command(command):
 # Command Implementations
 # ============================================================
 
-def cmd_ingest(filepath):
+def cmd_ingest(filepath, host, port):
     """
     INGEST command.
     Protocol: UPLOAD|<filesize>|\n  followed immediately by <filesize> bytes of content.
@@ -88,7 +109,7 @@ def cmd_ingest(filepath):
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect((SERVER_HOST, SERVER_PORT))
+            sock.connect((host, port))
             sock.sendall(header)
             sock.sendall(content_bytes)
             response = recv_response(sock)
@@ -96,51 +117,26 @@ def cmd_ingest(filepath):
     except ConnectionRefusedError:
         print(
             f"[ERROR] Connection refused. "
-            f"Is the server running on {SERVER_HOST}:{SERVER_PORT}?"
+            f"Is the server running on {host}:{port}?"
         )
     except Exception as exc:
         print(f"[ERROR] {exc}")
 
 
-def cmd_search_date(date):
-    """SEARCH_DATE: filter logs whose timestamp contains <date>."""
-    response = send_simple_command(f"QUERY|SEARCH_DATE|{date}")
-    print(f"[SEARCH_DATE]     Results for '{date}':\n{response}")
+def cmd_query(host, port, query_type, query_arg):
+    """Execute QUERY commands against a specific endpoint."""
+    print(f"[SYSTEM] Sending query to {host}:{port}...")
+    response = send_simple_command(f"QUERY|{query_type}|{query_arg}", host, port)
+
+    if query_type == "COUNT_KEYWORD":
+        print(f"[{query_type}] {response}")
+    else:
+        print(f"[{query_type}]\n{response}")
 
 
-def cmd_search_host(hostname):
-    """SEARCH_HOST: filter logs by exact hostname match."""
-    response = send_simple_command(f"QUERY|SEARCH_HOST|{hostname}")
-    print(f"[SEARCH_HOST]     Results for '{hostname}':\n{response}")
-
-
-def cmd_search_daemon(daemon):
-    """SEARCH_DAEMON: filter logs by daemon name."""
-    response = send_simple_command(f"QUERY|SEARCH_DAEMON|{daemon}")
-    print(f"[SEARCH_DAEMON]   Results for '{daemon}':\n{response}")
-
-
-def cmd_search_severity(level):
-    """SEARCH_SEVERITY: filter logs by severity level (INFO, ERR, WARNING, ...)."""
-    response = send_simple_command(f"QUERY|SEARCH_SEVERITY|{level}")
-    print(f"[SEARCH_SEVERITY] Results for '{level}':\n{response}")
-
-
-def cmd_search_keyword(word):
-    """SEARCH_KEYWORD: filter logs whose message contains <word>."""
-    response = send_simple_command(f"QUERY|SEARCH_KEYWORD|{word}")
-    print(f"[SEARCH_KEYWORD]  Results for '{word}':\n{response}")
-
-
-def cmd_count_keyword(word):
-    """COUNT_KEYWORD: count how many log entries contain <word> in the message."""
-    response = send_simple_command(f"QUERY|COUNT_KEYWORD|{word}")
-    print(f"[COUNT_KEYWORD]   Entries containing '{word}': {response}")
-
-
-def cmd_purge():
+def cmd_purge(host, port):
     """PURGE: clear all log entries from the server store."""
-    response = send_simple_command("ADMIN|PURGE")
+    response = send_simple_command("ADMIN|PURGE", host, port)
     print(f"[PURGE]           {response}")
 
 
@@ -151,30 +147,34 @@ def cmd_purge():
 HELP_TEXT = """
 Mini-Splunk CLI Forwarder  -  Available Commands
 =================================================
-  INGEST <filepath>            Upload a syslog file to the server
-  SEARCH_DATE <date>           Search logs by date     (e.g. Feb 22)
-  SEARCH_HOST <hostname>       Search logs by hostname (e.g. WEBSVR1)
-  SEARCH_DAEMON <daemon>       Search logs by daemon   (e.g. nginx)
-  SEARCH_SEVERITY <level>      Search logs by severity (INFO ERR WARNING CRIT NOTICE DEBUG EMERG ALERT)
-  SEARCH_KEYWORD <word>        Search logs by keyword in the message field
-  COUNT_KEYWORD <word>         Count log entries containing a keyword
-  PURGE                        Clear all logs from the server store
+  INGEST <filepath> <IP_or_DNS>:<Port>
+      Upload a syslog file to the target server
+
+  QUERY <IP_or_DNS>:<Port> SEARCH_DATE <date>
+  QUERY <IP_or_DNS>:<Port> SEARCH_HOST <hostname>
+  QUERY <IP_or_DNS>:<Port> SEARCH_DAEMON <daemon>
+  QUERY <IP_or_DNS>:<Port> SEARCH_SEVERITY <level>
+  QUERY <IP_or_DNS>:<Port> SEARCH_KEYWORD <keyword_or_phrase>
+  QUERY <IP_or_DNS>:<Port> COUNT_KEYWORD <keyword_or_phrase>
+
+  PURGE <IP_or_DNS>:<Port>
+      Clear all logs from the target server store
+
+  Notes:
+      Use quotes for multi-word values, e.g. "Feb 22" or "Failed password"
+
   HELP                         Show this help message
   EXIT                         Exit the CLI forwarder
 """
 
-COMMAND_MAP = {
-    "INGEST":           (cmd_ingest,          "Usage: INGEST <filepath>"),
-    "SEARCH_DATE":      (cmd_search_date,     "Usage: SEARCH_DATE <date>"),
-    "SEARCH_HOST":      (cmd_search_host,     "Usage: SEARCH_HOST <hostname>"),
-    "SEARCH_DAEMON":    (cmd_search_daemon,   "Usage: SEARCH_DAEMON <daemon>"),
-    "SEARCH_SEVERITY":  (cmd_search_severity, "Usage: SEARCH_SEVERITY <level>"),
-    "SEARCH_KEYWORD":   (cmd_search_keyword,  "Usage: SEARCH_KEYWORD <word>"),
-    "COUNT_KEYWORD":    (cmd_count_keyword,   "Usage: COUNT_KEYWORD <word>"),
-    "PURGE":            (cmd_purge,           None),
+QUERY_TYPES = {
+    "SEARCH_DATE",
+    "SEARCH_HOST",
+    "SEARCH_DAEMON",
+    "SEARCH_SEVERITY",
+    "SEARCH_KEYWORD",
+    "COUNT_KEYWORD",
 }
-
-NO_ARG_COMMANDS = {"PURGE"}
 
 
 def main():
@@ -194,9 +194,16 @@ def main():
         if not raw:
             continue
 
-        tokens = raw.split(" ", 1)
+        try:
+            tokens = shlex.split(raw)
+        except ValueError as exc:
+            print(f"[ERROR] Invalid command syntax: {exc}")
+            continue
+
+        if not tokens:
+            continue
+
         cmd = tokens[0].upper()
-        arg = tokens[1].strip() if len(tokens) > 1 else ""
 
         if cmd == "EXIT":
             print("[CLIENT] Goodbye!")
@@ -206,18 +213,66 @@ def main():
             print(HELP_TEXT)
             continue
 
-        if cmd not in COMMAND_MAP:
-            print(f"[ERROR] Unknown command '{cmd}'. Type 'help' for available commands.")
+        if cmd == "INGEST":
+            if len(tokens) < 3:
+                print("[ERROR] Usage: INGEST <filepath> <IP_or_DNS>:<Port>")
+                continue
+
+            filepath = tokens[1]
+            endpoint = tokens[2]
+            try:
+                host, port = parse_endpoint(endpoint)
+            except ValueError as exc:
+                print(f"[ERROR] {exc}")
+                continue
+
+            print(f"[SYSTEM] Connecting to {host}:{port}...")
+            cmd_ingest(filepath, host, port)
             continue
 
-        handler, usage_hint = COMMAND_MAP[cmd]
+        if cmd == "QUERY":
+            if len(tokens) < 4:
+                print("[ERROR] Usage: QUERY <IP_or_DNS>:<Port> <QUERY_TYPE> <value>")
+                continue
 
-        if cmd in NO_ARG_COMMANDS:
-            handler()
-        elif not arg:
-            print(f"[ERROR] {usage_hint}")
-        else:
-            handler(arg)
+            endpoint = tokens[1]
+            query_type = tokens[2].upper()
+            query_arg = " ".join(tokens[3:]).strip()
+
+            if query_type not in QUERY_TYPES:
+                print(f"[ERROR] Unknown query type '{query_type}'. Type 'help' for valid QUERY types.")
+                continue
+
+            if not query_arg:
+                print("[ERROR] Query value cannot be empty")
+                continue
+
+            try:
+                host, port = parse_endpoint(endpoint)
+            except ValueError as exc:
+                print(f"[ERROR] {exc}")
+                continue
+
+            cmd_query(host, port, query_type, query_arg)
+            continue
+
+        if cmd == "PURGE":
+            if len(tokens) != 2:
+                print("[ERROR] Usage: PURGE <IP_or_DNS>:<Port>")
+                continue
+
+            endpoint = tokens[1]
+            try:
+                host, port = parse_endpoint(endpoint)
+            except ValueError as exc:
+                print(f"[ERROR] {exc}")
+                continue
+
+            print(f"[SYSTEM] Connecting to {host}:{port} to purge records...")
+            cmd_purge(host, port)
+            continue
+
+        print(f"[ERROR] Unknown command '{cmd}'. Type 'help' for available commands.")
 
 
 if __name__ == "__main__":

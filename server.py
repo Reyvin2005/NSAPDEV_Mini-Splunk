@@ -80,7 +80,7 @@ def parse_line(line):
     if not match:
         return None
 
-    # PRI field is optional; if not present, default to INFO (severity 6)
+    # PRI field is optional. If not present, default to INFO (severity 6)
     priority_str = match.group(1)
     if priority_str is None:
         severity = "INFO"
