@@ -3,7 +3,7 @@ Mini-Splunk CLI Forwarder Client
 Course & Section: NSAPDEV | S12B/S31
 Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
 
-Usage: python client.py
+Usage: python client_cotan15.py
 
 Then type commands at the prompt. Type 'help' for a full list.
 """
