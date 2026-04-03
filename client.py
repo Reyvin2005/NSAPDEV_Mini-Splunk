@@ -11,6 +11,7 @@ Then type commands at the prompt. Type 'help' for a full list.
 import socket
 import os
 import shlex
+import json
 
 
 SERVER_HOST = "127.0.0.1"
@@ -87,6 +88,95 @@ def send_simple_command(command, host, port):
         return f"ERROR: {exc}"
 
 
+def display_paginated_results(query_type, param, initial_response):
+    """
+    Display paginated search results with metadata and allow navigation.
+    Handles user input for 'next', 'prev', and 'exit' to navigate pages.
+    """
+    try:
+        response_data = json.loads(initial_response)
+    except json.JSONDecodeError:
+        # Fallback for non-JSON responses (like error messages)
+        print(initial_response)
+        return
+    
+    metadata = response_data.get("metadata", {})
+    logs = response_data.get("logs", "NO_RESULTS")
+    total_results = metadata.get("total_results", 0)
+    page = metadata.get("page", 1)
+    total_pages = metadata.get("total_pages", 0)
+    per_page = metadata.get("per_page", 100)
+    results_on_page = metadata.get("results_on_page", 0)
+    has_next = metadata.get("has_next", False)
+    has_prev = metadata.get("has_prev", False)
+    
+    while True:
+        # Display metadata header
+        print("\n" + "=" * 70)
+        print(f"Query Results: {query_type} | Param: {param}")
+        print("=" * 70)
+        print(f"Total Results: {total_results} | Page {page}/{total_pages} | "
+              f"Showing {results_on_page} entries")
+        print("-" * 70)
+        
+        # Display logs
+        if logs == "NO_RESULTS":
+            print("No results found.")
+        else:
+            print(logs)
+        
+        # Display navigation options
+        print("-" * 70)
+        nav_options = []
+        if has_prev:
+            nav_options.append("[P]revious")
+        if has_next:
+            nav_options.append("[N]ext")
+        nav_options.append("[E]xit")
+        
+        print("Options: " + " | ".join(nav_options))
+        
+        # Get user input
+        if total_pages <= 1:
+            # No pagination needed
+            break
+        
+        choice = input("\nEnter command (n/p/e): ").strip().upper()
+        
+        if choice == "E" or choice == "EXIT":
+            break
+        elif choice == "N" and has_next:
+            next_page = page + 1
+            response = send_simple_command(f"QUERY|{query_type}|{param}|{next_page}")
+            try:
+                response_data = json.loads(response)
+                metadata = response_data.get("metadata", {})
+                logs = response_data.get("logs", "NO_RESULTS")
+                page = metadata.get("page", page)
+                has_next = metadata.get("has_next", False)
+                has_prev = metadata.get("has_prev", False)
+                results_on_page = metadata.get("results_on_page", 0)
+            except json.JSONDecodeError:
+                print("Error: Invalid response format")
+                break
+        elif choice == "P" and has_prev:
+            prev_page = page - 1
+            response = send_simple_command(f"QUERY|{query_type}|{param}|{prev_page}")
+            try:
+                response_data = json.loads(response)
+                metadata = response_data.get("metadata", {})
+                logs = response_data.get("logs", "NO_RESULTS")
+                page = metadata.get("page", page)
+                has_next = metadata.get("has_next", False)
+                has_prev = metadata.get("has_prev", False)
+                results_on_page = metadata.get("results_on_page", 0)
+            except json.JSONDecodeError:
+                print("Error: Invalid response format")
+                break
+        elif choice:
+            print("Invalid command. Use [N]ext, [P]revious, or [E]xit.")
+
+
 # ============================================================
 # Command Implementations
 # ============================================================
@@ -123,15 +213,40 @@ def cmd_ingest(filepath, host, port):
         print(f"[ERROR] {exc}")
 
 
-def cmd_query(host, port, query_type, query_arg):
-    """Execute QUERY commands against a specific endpoint."""
-    print(f"[SYSTEM] Sending query to {host}:{port}...")
-    response = send_simple_command(f"QUERY|{query_type}|{query_arg}", host, port)
+def cmd_search_date(date):
+    """SEARCH_DATE: filter logs whose timestamp contains <date>."""
+    response = send_simple_command(f"QUERY|SEARCH_DATE|{date}")
+    print(f"[SEARCH_DATE]     Results for '{date}':\n{response}")
 
-    if query_type == "COUNT_KEYWORD":
-        print(f"[{query_type}] {response}")
-    else:
-        print(f"[{query_type}]\n{response}")
+
+def cmd_search_host(hostname):
+    """SEARCH_HOST: filter logs by exact hostname match."""
+    response = send_simple_command(f"QUERY|SEARCH_HOST|{hostname}")
+    print(f"[SEARCH_HOST]     Results for '{hostname}':\n{response}")
+
+
+def cmd_search_daemon(daemon):
+    """SEARCH_DAEMON: filter logs by daemon name."""
+    response = send_simple_command(f"QUERY|SEARCH_DAEMON|{daemon}")
+    print(f"[SEARCH_DAEMON]   Results for '{daemon}':\n{response}")
+
+
+def cmd_search_severity(level):
+    """SEARCH_SEVERITY: filter logs by severity level (INFO, ERR, WARNING, ...)."""
+    response = send_simple_command(f"QUERY|SEARCH_SEVERITY|{level}")
+    print(f"[SEARCH_SEVERITY] Results for '{level}':\n{response}")
+
+
+def cmd_search_keyword(word):
+    """SEARCH_KEYWORD: filter logs whose message contains <word>."""
+    response = send_simple_command(f"QUERY|SEARCH_KEYWORD|{word}")
+    print(f"[SEARCH_KEYWORD]  Results for '{word}':\n{response}")
+
+
+def cmd_count_keyword(word):
+    """COUNT_KEYWORD: count how many log entries contain <word> in the message."""
+    response = send_simple_command(f"QUERY|COUNT_KEYWORD|{word}")
+    print(f"[COUNT_KEYWORD]   Entries containing '{word}': {response}")
 
 
 def cmd_purge(host, port):
@@ -186,7 +301,7 @@ def main():
 
     while True:
         try:
-            raw = input("mini-splunk> ").strip()
+            raw = input("\nmini-splunk> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\n[CLIENT] Exiting...")
             break
@@ -206,7 +321,7 @@ def main():
         cmd = tokens[0].upper()
 
         if cmd == "EXIT":
-            print("[CLIENT] Goodbye!")
+            print("\n\n[CLIENT] Goodbye!\n\n")
             break
 
         if cmd == "HELP":
