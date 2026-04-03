@@ -78,7 +78,7 @@ RFC3164_REGEX = re.compile(
         r"\d{1,2}:\d{2}:\d{2}"                   # time (hour can be 1-2 digits)
     r")\s+"
     r"(?P<hostname>\S+)\s+"
-    r"(?P<tag>[a-zA-Z0-9_.-]+)"                  # TAG – allow alnum, dot, hyphen, underscore 
+    r"(?P<tag>[a-zA-Z0-9_./-]+)"                 # TAG - allow alnum, dot, slash, hyphen, underscore
     r"(?:\[(?P<pid>\d+)\])?"                     # optional [PID]
     r":\s*"
     r"(?P<msg>.*)$"
@@ -91,7 +91,7 @@ RFC3164_REGEX = re.compile(
 RFC5424_REGEX = re.compile(
     r"^\s*"                                      # optional leading spaces
     r"(?:<(?P<pri>\d{1,3})>)"                   # PRI (mandatory)
-    r"\s+(?P<version>[1-9]\d{0,2})\s+"          # VERSION
+    r"(?P<version>[1-9]\d{0,2})\s+"             # VERSION
     r"(?P<timestamp>"
         r"-|"                                    # NILVALUE
         r"\d{4}-\d{2}-\d{2}T"
@@ -105,31 +105,9 @@ RFC5424_REGEX = re.compile(
     r"(?P<msgid>\S+)\s+"
     r"(?P<structured_data>"
         r"-|"                                    # NILVALUE
-        r"(?:\[[^\]]*\])+"                       # one or more structured data elements
+        r"(?:\[(?:\\.|[^\\\]])*\])+"            # one or more structured data elements
     r")"
     r"(?:\s+(?P<msg>.*))?$"                     # optional SP + MSG (free-form)
-)
-
-RFC5424_REGEX = re.compile(
-    r"^\s*"
-    r"(?:<(?P<pri>\d{1,3})>)"
-    r"\s+(?P<version>[1-9]\d{0,2})\s+"
-    r"(?P<timestamp>"
-        r"-|"
-        r"\d{4}-\d{2}-\d{2}T"
-        r"\d{2}:\d{2}:\d{2}"
-        r"(?:\.\d{1,6})?"
-        r"(?:Z|[+-]\d{2}:\d{2})"
-    r")\s+"
-    r"(?P<hostname>\S+)\s+"
-    r"(?P<appname>\S+)\s+"
-    r"(?P<procid>\S+)\s+"
-    r"(?P<msgid>\S+)\s+"
-    r"(?P<structured_data>"
-        r"-|"
-        r"(?:\[[^\]]*\])+"          # one or more SD elements
-    r")"
-    r"(?:\s+(?P<msg>.*))?$"
 )
 
 def parse_pri(priority_str):
@@ -158,9 +136,8 @@ def parse_line(line):
     m = RFC5424_REGEX.match(line)
     if m:
         appname = m.group("appname")
-        procid = m.group("procid")
-        # Build daemon field as "appname" or "appname[procid]"
-        daemon = appname if procid == "-" else f"{appname}[{procid}]"
+        # Keep daemon normalized for stable SEARCH_DAEMON matching.
+        daemon = appname
 
         return {
             "timestamp": m.group("timestamp"),
@@ -177,11 +154,7 @@ def parse_line(line):
     m = RFC3164_REGEX.match(line)
     if m:
         tag = m.group("tag")
-        pid = m.group("pid")
-        if pid:
-            daemon = f"{tag}[{pid}]"
-        else:
-            daemon = tag
+        daemon = tag
 
         return {
             "timestamp": m.group("timestamp"),
@@ -226,6 +199,11 @@ def format_entries(entries):
     return "\n".join(lines)
 
 
+def normalize_whitespace(text):
+    """Collapse repeated whitespace so date queries can match padded timestamps."""
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
 def format_paginated_response(all_results, page=1, per_page=RESULTS_PER_PAGE):
     """
     Format query results with pagination metadata.
@@ -263,10 +241,10 @@ def format_paginated_response(all_results, page=1, per_page=RESULTS_PER_PAGE):
 
 
 def search_by_date(date, page=1):
-    needle = date.strip().lower()
+    needle = normalize_whitespace(date)
     results = [
         e for e in get_snapshot()
-        if needle in e["timestamp"].lower()
+        if needle in normalize_whitespace(e["timestamp"])
     ]
     return format_paginated_response(results, page)
 
