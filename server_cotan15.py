@@ -14,6 +14,7 @@ import socket
 import threading
 import re
 import json
+import io
 
 
 HOST = "0.0.0.0"
@@ -30,6 +31,23 @@ SEVERITY_MAP = {
     6: "INFO",
     7: "DEBUG",
 }
+
+# Ordered keyword list for message-content severity inference.
+# Used as a fallback when a log line carries no PRI field.
+# Order matters: more specific terms (e.g. "crit") are checked before
+# shorter ones that could appear inside them (e.g. "err" inside "error").
+SEVERITY_KEYWORDS = [
+    ("emerg",   "EMERG"),
+    ("alert",   "ALERT"),
+    ("crit",    "CRIT"),
+    ("error",   "ERR"),
+    ("err",     "ERR"),
+    ("warning", "WARNING"),
+    ("warn",    "WARNING"),
+    ("notice",  "NOTICE"),
+    ("debug",   "DEBUG"),
+    ("info",    "INFO"),
+]
 
 
 # ============================================================
@@ -111,14 +129,27 @@ RFC5424_REGEX = re.compile(
 )
 
 
+def infer_severity_from_message(message):
+    """
+    Infer severity from message content when the PRI field is absent.
+    Scans the message (case-insensitive) for the first matching keyword
+    in SEVERITY_KEYWORDS. Returns 'INFO' if no keyword is found.
+    """
+    msg_lower = message.lower()
+    for keyword, severity in SEVERITY_KEYWORDS:
+        if keyword in msg_lower:
+            return severity
+    return "INFO"
+
+
 def parse_pri(priority_str):
     """Convert PRI (0..191) into severity using the low 3 bits."""
     if priority_str is None:
-        return "INFO"
+        return None                          # caller must fall back to message inference
     try:
         priority = int(priority_str)
     except ValueError:
-        return "INFO"
+        return None
     severity_num = priority & 0x07
     return SEVERITY_MAP.get(severity_num, "UNKNOWN")
 
@@ -128,6 +159,11 @@ def parse_line(line):
     Parse one syslog line as RFC 5424 first, then RFC 3164.
     Returns a dict with fields: timestamp, hostname, daemon, severity, message,
     format, structured_data (or None), raw.
+
+    Severity resolution order:
+      1. PRI field (RFC-compliant): used when the log line contains a <PRI> header.
+      2. Message-content inference: used as a fallback when PRI is absent,
+         scanning the message text for keywords (error, warn, crit, etc.).
     Returns None for non-matching lines.
     """
     line = line.rstrip("\n\r")
@@ -137,12 +173,14 @@ def parse_line(line):
     # Try RFC 5424
     m = RFC5424_REGEX.match(line)
     if m:
+        msg = m.group("msg") or ""
+        severity = parse_pri(m.group("pri")) or infer_severity_from_message(msg)
         return {
             "timestamp": m.group("timestamp"),
             "hostname": m.group("hostname"),
             "daemon": m.group("appname"),
-            "severity": parse_pri(m.group("pri")),
-            "message": m.group("msg") or "",
+            "severity": severity,
+            "message": msg,
             "format": "RFC5424",
             "structured_data": m.group("structured_data"),
             "raw": line,
@@ -151,14 +189,14 @@ def parse_line(line):
     # Try RFC 3164
     m = RFC3164_REGEX.match(line)
     if m:
-        tag = m.group("tag")
-
+        msg = m.group("msg") or ""
+        severity = parse_pri(m.group("pri")) or infer_severity_from_message(msg)
         return {
             "timestamp": m.group("timestamp"),
             "hostname": m.group("hostname"),
-            "daemon": tag,
-            "severity": parse_pri(m.group("pri")),
-            "message": m.group("msg") or "",
+            "daemon": m.group("tag"),
+            "severity": severity,
+            "message": msg,
             "format": "RFC3164",
             "structured_data": None,
             "raw": line,
@@ -169,9 +207,13 @@ def parse_line(line):
 
 
 def parse_stream(content):
-    """Parse a multi-line syslog string and return a list of log dictionaries."""
+    """
+    Parse a multi-line syslog string and return a list of log dictionaries.
+    Uses io.StringIO for line-by-line iteration to avoid materialising the
+    entire splitlines() list in memory at once.
+    """
     entries = []
-    for line in content.splitlines():
+    for line in io.StringIO(content):
         entry = parse_line(line)
         if entry:
             entries.append(entry)
