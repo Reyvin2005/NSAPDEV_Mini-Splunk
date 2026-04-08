@@ -1,6 +1,6 @@
 """
 Mini-Splunk Concurrent Syslog Analytics Server
-Course & Section: NSAPDEV | S12B/S31
+Course & Section: NSAPDEV | S31/S12B
 Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
 
 Architecture: Thread-per-Connection TCP server.

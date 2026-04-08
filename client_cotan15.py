@@ -1,6 +1,6 @@
 """
 Mini-Splunk CLI Forwarder Client
-Course & Section: NSAPDEV | S12B/S31
+Course & Section: NSAPDEV | S31/S12B
 Authors: Joshua Benedict B. Co and Reyvin Matthew T. Tan
 
 Usage: python client_cotan15.py
