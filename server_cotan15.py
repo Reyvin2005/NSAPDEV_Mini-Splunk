@@ -18,7 +18,7 @@ import io
 
 
 HOST = "0.0.0.0"
-PORT = 9514
+PORT = 8080
 RESULTS_PER_PAGE = 100
 
 SEVERITY_MAP = {

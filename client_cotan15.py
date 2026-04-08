@@ -14,8 +14,8 @@ import shlex
 import json
 
 
-SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 9514
+SERVER_HOST = "103.231.240.136"
+SERVER_PORT = 11334
 
 
 # ============================================================
