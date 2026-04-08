@@ -193,23 +193,32 @@ def cmd_ingest(filepath, host, port):
     """
     INGEST command.
     Protocol: UPLOAD|<filesize>|\n  followed immediately by <filesize> bytes of content.
+
+    The file size is determined via os.path.getsize() so the file never needs
+    to be fully loaded into RAM. Content is sent in 4096-byte chunks, allowing
+    arbitrarily large syslog files to be uploaded without memory exhaustion.
     """
     if not os.path.exists(filepath):
         print(f"[ERROR] File not found: {filepath}")
         return
 
-    with open(filepath, "r", encoding="utf-8") as fh:
-        content = fh.read()
-
-    content_bytes = content.encode("utf-8")
-    filesize = len(content_bytes)
+    filesize = os.path.getsize(filepath)
     header = f"UPLOAD|{filesize}|\n".encode("utf-8")
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.connect((host, port))
             sock.sendall(header)
-            sock.sendall(content_bytes)
+            # Send file content in 4096-byte chunks — never loads the
+            # whole file into memory at once.
+            with open(filepath, "rb") as fh:
+                sent = 0
+                while sent < filesize:
+                    chunk = fh.read(min(4096, filesize - sent))
+                    if not chunk:
+                        break
+                    sock.sendall(chunk)
+                    sent += len(chunk)
             response = recv_response(sock)
         print(f"[INGEST]          {response}")
     except ConnectionRefusedError:
